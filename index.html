@@ -227,6 +227,10 @@ tr.me td{color:var(--signal)}
 .plist li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plist li.empty{color:var(--steel);border-style:dashed}
 .plist em{font-style:normal;font-size:12px;color:var(--hazard);white-space:nowrap}
+.plist .pr{display:flex;align-items:center;gap:10px;flex:none}
+.plist li{min-height:46px;box-sizing:border-box}
+.go.ghost.kick{padding:7px 14px;font-size:13px;color:var(--danger);border-color:rgba(255,51,85,.55)}
+.go.ghost.kick.arm{background:var(--danger);color:#fff;border-color:var(--danger)}
 .codebox{font-family:var(--f-disp);color:var(--steel);letter-spacing:.1em;display:flex;align-items:baseline;gap:12px}
 .codebox b{font-size:46px;color:var(--cyan);letter-spacing:.18em;text-shadow:0 0 18px rgba(34,232,255,.6)}
 .kv b{display:block;color:var(--chalk);font-size:22px;font-weight:800}
@@ -2477,9 +2481,12 @@ function applyCustom(buf,flip,save){
 /* ================= multiplayer (room capability) ================= */
 const SLOT_COL=[0xff2bd6,0x22e8ff,0x8dff2e,0xffd21f,0x9a6bff,0xeaf4ff];
 const MP={room:null,ready:false,nr:null,code:null,me:null,hostPeer:null,prevHost:null,isHost:false,creator:false,
-  raceId:null,racing:false,active:false,spectator:false,carsByPeer:new Map(),aiCars:[],lastSend:0,hostPres:null,ph:'lobby'};
+  raceId:null,racing:false,active:false,spectator:false,carsByPeer:new Map(),aiCars:[],lastSend:0,hostPres:null,ph:'lobby',
+  kicked:new Set(),kdid:new Set(),kickArm:null};   // host's kick list: room peers + this-tab device ids
 const escHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cleanNick=s=>String(s||'').replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁯﻿]/g,'').trim().slice(0,12);
+const DID_RE=/^[a-z0-9]{10}$/;
+const DID=(()=>{ let d=''; try{ d=sessionStorage.getItem('bgp-did')||''; }catch(e){} if(!DID_RE.test(d)){ d=(Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/g,'').slice(0,10).padEnd(10,'0'); try{ sessionStorage.setItem('bgp-did',d); }catch(e){} } return d; })();
 function myNick(){ let n=cleanNick(settings.nick); if(!n){ n='레이서'+((Math.random()*900+100)|0); settings.nick=n; saveSettings(); } return n; }
 const r1=x=>Math.round(x*10)/10, r2=x=>Math.round(x*100)/100, r3=x=>Math.round(x*1000)/1000;
 function encodeCar(c){
@@ -2557,7 +2564,7 @@ function makeP2PRoom(){
     R.arr=()=>[...R.list.entries()].map(([id,pr])=>({peer:id,kind:'viewer',sameTab:id===R.me,presence:pr,guest:false}));
     R.fire=(j,l)=>{ if(j) R.pj.push(...j); if(l) R.pl.push(...l); if(R.queued) return; R.queued=true;
       queueMicrotask(()=>{ R.queued=false; const ch={joined:R.pj,left:R.pl}; R.pj=[]; R.pl=[]; if(R.closed) return; R.cbs.forEach(f=>{ try{ f(ch); }catch(e){ console.error(e); } }); }); };
-    R.close=()=>{ if(R.closed) return; R.closed=true; R.closeCbs.forEach(f=>{ try{ f(); }catch(e){} }); };
+    R.close=err=>{ if(R.closed) return; R.closed=true; R.closeCbs.forEach(f=>{ try{ f(err); }catch(e){} }); };
     R.api=extra=>Object.assign({ onPeers(cb,onClose){ R.cbs.push(cb); if(onClose) R.closeCbs.push(onClose); }, peers:()=>R.arr() },extra);
     return R;
   }
@@ -2584,6 +2591,7 @@ function makeP2PRoom(){
     peer.on('disconnected',()=>{ if(!R.closed) try{ peer.reconnect(); }catch(e){} });   // only the matchmaking link dropped; open channels keep running
     peer.on('error',()=>{});
     return R.api({ hub:true,
+      kick(id){ const c=conns.get(id); if(!c) return; send(c,{t:'kicked'}); dropIt(id); setTimeout(()=>{ try{ c.close(); }catch(e){} },600); },
       presence(patch){ const pr=merge(R.list.get(R.me)||{},patch||{}); R.list.set(R.me,pr); bcast({t:'pp',peer:R.me,pr}); R.fire(); return Promise.resolve(); },
       async leave(){ R.closed=true; clearInterval(hb); conns.forEach(c=>{ try{c.close();}catch(e){} }); try{ peer.destroy(); }catch(e){} } });
   }
@@ -2605,6 +2613,7 @@ function makeP2PRoom(){
         else if(!settled) return;
         else if(m.t==='join'&&typeof m.peer==='string'){ R.list.set(m.peer,m.pr||{}); R.fire([{peer:m.peer}],null); }
         else if(m.t==='leave'&&typeof m.peer==='string'){ R.list.delete(m.peer); R.fire(null,[{peer:m.peer}]); }
+        else if(m.t==='kicked'){ clearInterval(hb); try{ c.close(); }catch(e){} try{ peer.destroy(); }catch(e){} R.close({code:'p2p_kicked'}); }
         else if(m.t==='pp'&&typeof m.peer==='string'&&m.peer!==R.me&&m.pr&&typeof m.pr==='object'){ R.list.set(m.peer,m.pr); R.fire(); } });
       c.on('close',()=>{ if(!settled) fail('not_found'); else R.close(); });
       c.on('error',()=>{ if(!settled) fail('upstream_error'); });
@@ -2639,17 +2648,42 @@ async function initRoom(){
 }
 function setLobbyPresence(){
   if(!MP.room) return;
-  const n=MP.nr?MP.nr.peers().filter(p=>p.kind==='viewer').length:0;
+  const n=MP.nr?MP.nr.peers().filter(p=>p.kind==='viewer'&&(p.sameTab||!isKicked(p))).length:0;
   MP.room.presence({nm:myNick(),rc:MP.code||null,h:MP.code&&MP.isHost?1:0,n,ph:MP.code?(MP.racing?'race':'lobby'):null,map:MP.code&&MP.isHost?MAP.id:null}).catch(()=>{});
 }
 function electHost(){
   if(!MP.nr) return;
-  const ps=MP.nr.peers().filter(p=>p.kind==='viewer');
+  const ps=MP.nr.peers().filter(p=>p.kind==='viewer'&&(p.sameTab||!isKicked(p)));
   const me=ps.find(p=>p.sameTab); if(me) MP.me=me.peer;
   const claim=ps.filter(p=>p.presence&&p.presence.h===1).map(p=>p.peer).sort();
   const all=ps.map(p=>p.peer).sort();
-  MP.prevHost=MP.hostPeer;
+  MP.prevHost=MP.hostPeer; const was=MP.isHost;
   MP.hostPeer=claim[0]||all[0]||null; MP.isHost=!!MP.me&&MP.hostPeer===MP.me;
+  if(MP.isHost&&!was&&(MP.kicked.size||MP.kdid.size)) MP.nr.presence(kickList()).catch(()=>{});   // took over: keep the old host's kicks
+}
+/* host kick: the host lists kicked peers (and their tab ids, so a reload can't slip back in) in its presence.
+   Everyone hides them and drops their car; the kicked player leaves on seeing itself listed.
+   On the web build the hub also cuts their connection. */
+function isKicked(p){ const d=p&&p.presence&&p.presence.did; return !!p&&(MP.kicked.has(p.peer)||(typeof d==='string'&&MP.kdid.has(d))); }
+function kickList(){ return {kick:[...MP.kicked].slice(-24),kd:[...MP.kdid].slice(-24)}; }
+function syncKicks(pr){
+  if(Array.isArray(pr.kick)) pr.kick.slice(0,24).forEach(x=>{ if(typeof x==='string'&&x&&x.length<80&&x!==MP.hostPeer) MP.kicked.add(x); });
+  if(Array.isArray(pr.kd)) pr.kd.slice(0,24).forEach(x=>{ if(typeof x==='string'&&DID_RE.test(x)) MP.kdid.add(x); });
+}
+function dropRacer(peer){ const car=MP.carsByPeer.get(peer); if(car){ car.mode='off'; setTag(car,''); MP.carsByPeer.delete(peer); } }
+function kickPeer(peer){
+  if(!MP.nr||!MP.isHost||!peer||peer===MP.me) return;
+  const p=MP.nr.peers().find(x=>x.peer===peer), d=p&&p.presence&&p.presence.did;
+  MP.kicked.add(peer); if(typeof d==='string'&&DID_RE.test(d)&&d!==DID) MP.kdid.add(d);
+  MP.kickArm=null;
+  MP.nr.presence(kickList()).catch(()=>{});
+  if(typeof MP.nr.kick==='function') MP.nr.kick(peer);
+  dropRacer(peer); setLobbyPresence(); renderMp();
+}
+async function kickedOut(){
+  if(!MP.nr) return;
+  await leaveRoom(false); openMp(); mpNote('방장이 이 방에서 내보냈어요.');
+  if(P2P&&/^#[A-Za-z0-9]{4}$/.test(location.hash||'')) try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
 }
 async function joinRoom(code,creator){
   if(!MP.room){ mpNote('지금은 멀티플레이에 연결할 수 없어요.'); return; }
@@ -2659,10 +2693,11 @@ async function joinRoom(code,creator){
   mpNote('방에 들어가는 중…');
   try{
     const nr=await MP.room.join('gp-'+code.toLowerCase());
-    MP.nr=nr; MP.code=code; MP.creator=!!creator; MP.raceId=null; MP.hostPres=null;
-    nr.onPeers(onRoomPeers,()=>{ mpNote('방 연결이 끊겼어요. 다시 입장해 주세요.'); leaveRoom(true); });
+    MP.nr=nr; MP.code=code; MP.creator=!!creator; MP.raceId=null; MP.hostPres=null; MP.kicked=new Set(); MP.kdid=new Set(); MP.kickArm=null;
+    nr.onPeers(onRoomPeers,e=>{ if(e&&e.code==='p2p_kicked'){ kickedOut(); return; } mpNote('방 연결이 끊겼어요. 다시 입장해 주세요.'); leaveRoom(true); });
     const emptyRoom=P2P&&nr.hub&&!creator; if(nr.hub) MP.creator=true;
-    await nr.presence({nm:myNick(),h:MP.creator?1:0,ph:'lobby',map:MAP.id}).catch(()=>{});
+    await nr.presence({nm:myNick(),h:MP.creator?1:0,ph:'lobby',map:MAP.id,did:DID}).catch(()=>{});
+    if(MP.nr!==nr) return;   // turned away (kicked) while joining
     mpNote(emptyRoom?'이 코드의 방에는 아직 아무도 없어요. 코드가 맞는지 확인하거나 친구가 들어올 때까지 기다려 주세요.':''); electHost(); setLobbyPresence(); renderMp();
   }catch(e){
     MP.nr=null; MP.code=null;
@@ -2670,7 +2705,7 @@ async function joinRoom(code,creator){
   }
 }
 async function leaveRoom(quiet){
-  const nr=MP.nr; MP.nr=null; MP.code=null; MP.isHost=false; MP.hostPeer=null; MP.raceId=null; MP.hostPres=null;
+  const nr=MP.nr; MP.nr=null; MP.code=null; MP.isHost=false; MP.hostPeer=null; MP.raceId=null; MP.hostPres=null; MP.kicked=new Set(); MP.kdid=new Set(); MP.kickArm=null;
   if(nr){ try{ await nr.leave(); }catch(e){} }
   if(MP.active){ restoreSP(); if(!quiet) toMenu(); }
   setLobbyPresence(); renderMp();
@@ -2679,8 +2714,13 @@ function onRoomPeers(ch){
   if(!MP.nr) return;
   electHost();
   const now=performance.now(), peers=MP.nr.peers();
+  const hp=peers.find(p=>p.peer===MP.hostPeer&&!p.sameTab);
+  if(hp&&hp.presence){ syncKicks(hp.presence); if(!MP.isHost&&(MP.kicked.has(MP.me)||MP.kdid.has(DID))){ kickedOut(); return; } }
   for(const p of peers){
     if(p.sameTab||p.kind!=='viewer') continue;
+    if(isKicked(p)){ dropRacer(p.peer);
+      if(MP.isHost){ if(!MP.kicked.has(p.peer)){ MP.kicked.add(p.peer); MP.nr.presence(kickList()).catch(()=>{}); } if(typeof MP.nr.kick==='function') MP.nr.kick(p.peer); }
+      continue; }
     const pr=p.presence||{};
     if(MP.racing&&pr.rid===MP.raceId&&pr.c){
       const car=MP.carsByPeer.get(p.peer);
@@ -2703,7 +2743,7 @@ function onRoomPeers(ch){
 }
 function hostStart(){
   if(!MP.nr||!MP.isHost) return;
-  const others=MP.nr.peers().filter(p=>p.kind==='viewer'&&!p.sameTab).map(p=>p.peer);
+  const others=MP.nr.peers().filter(p=>p.kind==='viewer'&&!p.sameTab&&!isKicked(p)).map(p=>p.peer);
   const humans=[MP.me,...others];
   for(let i=humans.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [humans[i],humans[j]]=[humans[j],humans[i]]; }
   const grid=humans.slice(0,6), aiN=0;   // multiplayer races are people only
@@ -2775,15 +2815,27 @@ function renderMp(){
     mpEl('mpOnline').textContent=can&&!P2P?'· 지금 '+lp.length+'명 접속':'';
     mpEl('mpRoomsBox').hidden=P2P; mpEl('mpP2PHelp').hidden=!P2P;
     const rooms=lp.filter(p=>p.presence&&p.presence.h===1&&typeof p.presence.rc==='string'&&/^[A-Z0-9]{4}$/.test(p.presence.rc)&&!p.sameTab);
-    const ul=mpEl('mpRooms'); ul.textContent='';
+    const ul=mpEl('mpRooms');
+    const rtxt=p=>p.presence.rc+' · '+(cleanNick(p.presence.nm)||'방장')+' · '+(p.presence.n|0)+'명'+(MAPI[p.presence.map]?' · '+MAPI[p.presence.map].name:'')+(p.presence.ph==='race'?' · 레이스 중':'');
+    const sig=JSON.stringify([can,rooms.map(rtxt)]);
+    if(ul.dataset.sig!==sig){ ul.dataset.sig=sig; ul.textContent='';
     if(!rooms.length){ const li=document.createElement('li'); li.className='empty'; li.textContent=can?'열린 방이 없어요. 방을 만들어 친구에게 코드를 알려 주세요.':'—'; ul.appendChild(li); }
-    rooms.forEach(p=>{ const li=document.createElement('li'); const s=document.createElement('span'); s.textContent=p.presence.rc+' · '+(cleanNick(p.presence.nm)||'방장')+' · '+(p.presence.n|0)+'명'+(MAPI[p.presence.map]?' · '+MAPI[p.presence.map].name:'')+(p.presence.ph==='race'?' · 레이스 중':''); const b=document.createElement('button'); b.className='go ghost sm'; b.textContent='참가'; b.addEventListener('click',()=>joinRoom(p.presence.rc,false)); li.append(s,b); ul.appendChild(li); });
+    rooms.forEach(p=>{ const li=document.createElement('li'); const s=document.createElement('span'); s.textContent=rtxt(p); const b=document.createElement('button'); b.className='go ghost sm'; b.textContent='참가'; const rc=p.presence.rc; b.addEventListener('click',()=>joinRoom(rc,false)); li.append(s,b); ul.appendChild(li); });
+    }
   } else {
     mpEl('mpCodeShow').textContent=MP.code; mpEl('mpInviteRow').hidden=!P2P; mpEl('mpRoomHelp').textContent=P2P?'친구에게 초대 링크를 보내거나, 이 게임 주소를 열고 멀티플레이에서 코드를 입력하게 하세요. 로그인은 필요 없어요.':'친구가 이 게임에서 멀티플레이를 열고 이 코드를 입력하거나 열린 방 목록에서 참가하면 같은 레이스에 들어와요.';
-    const ps=MP.nr.peers().filter(p=>p.kind==='viewer').slice().sort((a,b)=>a.peer<b.peer?-1:1);
-    const ul=mpEl('mpPlayers'); ul.textContent='';
-    ps.forEach((p,i)=>{ const li=document.createElement('li'); const s=document.createElement('span'); s.textContent=(p.sameTab?myNick():cleanNick(p.presence&&p.presence.nm)||'레이서')+(p.sameTab?' (나)':''); const t=document.createElement('em'); t.textContent=(p.peer===MP.hostPeer?'방장':'')+(p.guest?' 게스트':''); li.append(s,t); ul.appendChild(li); });
+    const ps=MP.nr.peers().filter(p=>p.kind==='viewer'&&(p.sameTab||!isKicked(p))).slice().sort((a,b)=>a.peer<b.peer?-1:1);
+    const ul=mpEl('mpPlayers');
+    const armed=peer=>!!MP.kickArm&&MP.kickArm.peer===peer&&performance.now()<MP.kickArm.until;
+    const sig=JSON.stringify([MP.isHost,MP.hostPeer,ps.map(p=>[p.peer,p.sameTab?myNick():cleanNick(p.presence&&p.presence.nm),p.guest,armed(p.peer)])]);
+    if(ul.dataset.sig!==sig){ ul.dataset.sig=sig; ul.textContent='';
+    ps.forEach((p,i)=>{ const li=document.createElement('li'); const s=document.createElement('span'); const nm=p.sameTab?myNick():cleanNick(p.presence&&p.presence.nm)||'레이서'; s.textContent=nm+(p.sameTab?' (나)':''); const r=document.createElement('div'); r.className='pr'; const t=document.createElement('em'); t.textContent=(p.peer===MP.hostPeer?'방장':'')+(p.guest?' 게스트':''); r.appendChild(t);
+      if(MP.isHost&&!p.sameTab){ const b=document.createElement('button'), arm=armed(p.peer); b.className='go ghost sm kick'+(arm?' arm':''); b.textContent=arm?'정말 강퇴':'강퇴'; b.setAttribute('aria-label',nm+' 강퇴');
+        b.addEventListener('click',()=>{ if(armed(p.peer)){ kickPeer(p.peer); return; } MP.kickArm={peer:p.peer,until:performance.now()+3000}; renderMp(); setTimeout(()=>{ if(MP.kickArm&&MP.kickArm.peer===p.peer&&!armed(p.peer)){ MP.kickArm=null; renderMp(); } },3100); });
+        r.appendChild(b); }
+      li.append(s,r); ul.appendChild(li); });
     if(ps.length>6){ const li=document.createElement('li'); li.className='empty'; li.textContent='6명이 넘으면 나머지는 관전해요.'; ul.appendChild(li); }
+    }
     mpEl('mpStart').hidden=!MP.isHost; mpEl('mpWait').hidden=MP.isHost;
     const hp=MP.isHost?null:ps.find(p=>p.peer===MP.hostPeer), hm=hp&&hp.presence&&MAPI[hp.presence.map];
     mpEl('mpMapName').textContent=(MP.isHost?MAP:(hm||MAP)).name; mpEl('mpMapBtn').hidden=!MP.isHost;
@@ -2933,7 +2985,7 @@ if(HEADLESS){
     loadMap:id=>{ applyMap(id); buildMini(); resetRace('menu'); }};
   ['N','DS','LEN','KS','LINE','CX','CY','CZ','MAP','TERRAIN_Y'].forEach(k=>Object.defineProperty(window.__game,k,{get:()=>({N,DS,LEN,KS,LINE,CX,CY,CZ,MAP,TERRAIN_Y})[k]}));
 } else {
-  if(window.__DEBUG) window.__dbg={cars,race,simStep,player,cam,camera,MP,mpTick,sfx,music,switchMap,MAPS,get MAP(){return MAP;}};
+  if(window.__DEBUG) window.__dbg={cars,race,simStep,player,cam,camera,MP,mpTick,sfx,music,switchMap,MAPS,kickPeer,mpBackToRoom,DID,get MAP(){return MAP;}};
   window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 }
 })();
