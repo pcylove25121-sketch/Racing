@@ -341,7 +341,6 @@ tr.me td{color:var(--signal)}
       <input id="mpInviteText" readonly hidden aria-label="초대 링크">
       <ul id="mpPlayers" class="plist"></ul>
       <div class="row"><span class="lab">코스</span><b id="mpMapName" class="mpmap"></b><button class="go ghost sm" id="mpMapBtn">코스 바꾸기</button></div>
-      <div class="row" id="mpHostRow"><button class="tog" id="mpAi" aria-pressed="true">빈자리 AI로 채우기</button></div>
       <p class="help" id="mpWait" hidden>방장이 레이스를 시작하면 자동으로 출발해요.</p>
       <div class="row"><button class="go" id="mpStart">레이스 시작</button><button class="go ghost sm" id="mpLeave">방 나가기</button></div>
     </div>
@@ -2455,7 +2454,7 @@ function applyCustom(buf,flip,save){
 /* ================= multiplayer (room capability) ================= */
 const SLOT_COL=[0xff2bd6,0x22e8ff,0x8dff2e,0xffd21f,0x9a6bff,0xeaf4ff];
 const MP={room:null,ready:false,nr:null,code:null,me:null,hostPeer:null,prevHost:null,isHost:false,creator:false,
-  raceId:null,racing:false,active:false,spectator:false,aiFill:true,carsByPeer:new Map(),aiCars:[],lastSend:0,hostPres:null,ph:'lobby'};
+  raceId:null,racing:false,active:false,spectator:false,carsByPeer:new Map(),aiCars:[],lastSend:0,hostPres:null,ph:'lobby'};
 const escHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cleanNick=s=>String(s||'').replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁯﻿]/g,'').trim().slice(0,12);
 function myNick(){ let n=cleanNick(settings.nick); if(!n){ n='레이서'+((Math.random()*900+100)|0); settings.nick=n; saveSettings(); } return n; }
@@ -2684,7 +2683,7 @@ function hostStart(){
   const others=MP.nr.peers().filter(p=>p.kind==='viewer'&&!p.sameTab).map(p=>p.peer);
   const humans=[MP.me,...others];
   for(let i=humans.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [humans[i],humans[j]]=[humans[j],humans[i]]; }
-  const grid=humans.slice(0,6), aiN=MP.aiFill?Math.max(0,6-grid.length):0;
+  const grid=humans.slice(0,6), aiN=0;   // multiplayer races are people only
   const rid=Math.random().toString(36).slice(2,9);
   MP.nr.presence({rid,ph:'countdown',grid,ai:aiN,ais:null,map:MAP.id}).catch(()=>{});
   startMpRace(grid,aiN,rid,false,MAP.id);
@@ -2762,8 +2761,7 @@ function renderMp(){
     const ul=mpEl('mpPlayers'); ul.textContent='';
     ps.forEach((p,i)=>{ const li=document.createElement('li'); const s=document.createElement('span'); s.textContent=(p.sameTab?myNick():cleanNick(p.presence&&p.presence.nm)||'레이서')+(p.sameTab?' (나)':''); const t=document.createElement('em'); t.textContent=(p.peer===MP.hostPeer?'방장':'')+(p.guest?' 게스트':''); li.append(s,t); ul.appendChild(li); });
     if(ps.length>6){ const li=document.createElement('li'); li.className='empty'; li.textContent='6명이 넘으면 나머지는 관전해요.'; ul.appendChild(li); }
-    mpEl('mpHostRow').hidden=!MP.isHost; mpEl('mpStart').hidden=!MP.isHost; mpEl('mpWait').hidden=MP.isHost;
-    mpEl('mpAi').setAttribute('aria-pressed',String(MP.aiFill));
+    mpEl('mpStart').hidden=!MP.isHost; mpEl('mpWait').hidden=MP.isHost;
     const hp=MP.isHost?null:ps.find(p=>p.peer===MP.hostPeer), hm=hp&&hp.presence&&MAPI[hp.presence.map];
     mpEl('mpMapName').textContent=(MP.isHost?MAP:(hm||MAP)).name; mpEl('mpMapBtn').hidden=!MP.isHost;
   }
@@ -2827,7 +2825,6 @@ if(!HEADLESS){
     const show=()=>{ box.hidden=false; box.value=link; box.focus(); box.select(); msg.textContent='링크를 길게 눌러 복사하세요'; };
     try{ navigator.clipboard.writeText(link).then(()=>{ msg.textContent='복사했어요'; box.hidden=true; },show); }catch(e){ show(); } });
   $('#mpStart').addEventListener('click',hostStart);
-  $('#mpAi').addEventListener('click',()=>{ MP.aiFill=!MP.aiFill; renderMp(); });
   $('#mpMapBtn').addEventListener('click',()=>{ if(!MP.isHost) return; const i=MAPS.indexOf(MAP); switchMap(MAPS[(i+1)%MAPS.length].id,true); if(MP.nr) MP.nr.presence({map:MAP.id}).catch(()=>{}); setLobbyPresence(); renderMp(); });
   $('#btnResume').addEventListener('click',resume);
   $('#btnPause').addEventListener('click',()=>!el.pause.hidden?resume():pause());
