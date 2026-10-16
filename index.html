@@ -139,6 +139,12 @@ button:focus-visible{outline:2px solid var(--hazard);outline-offset:2px}
 #controls.auto #bGas{display:none}
 #controls.auto #bBrake{width:clamp(96px,calc(var(--gh)*0.24),124px);height:clamp(90px,calc(var(--gh)*0.25),130px)}
 
+#steerBtns{pointer-events:auto;display:none;gap:14px;align-items:flex-end}
+.sbtn{width:clamp(80px,calc(var(--gh)*0.22),116px);height:clamp(80px,calc(var(--gh)*0.22),116px);border-radius:50%;
+  display:grid;place-items:center;font-family:var(--f-disp);font-size:36px;color:var(--chalk);touch-action:none}
+.sbtn.on{background:rgba(255,43,214,.32);border-color:rgba(255,43,214,.85);box-shadow:0 0 22px rgba(255,43,214,.55);color:#fff}
+#controls.btns #steer{display:none}
+#controls.btns #steerBtns{display:flex}
 #stage.portrait #steer{width:52%}
 #stage.portrait #banner{top:30%}
 
@@ -263,6 +269,7 @@ tr.me td{color:var(--signal)}
 
 <div id="controls" hidden>
   <div id="steer" class="glass" aria-label="핸들"><span>◀</span><div id="knob"></div><span>▶</span></div>
+  <div id="steerBtns"><button class="sbtn glass" id="bLeft" aria-label="왼쪽으로">◀</button><button class="sbtn glass" id="bRight" aria-label="오른쪽으로">▶</button></div>
   <div id="pedals">
     <button class="pbtn glass" id="bNitro">NITRO</button>
     <button class="pbtn glass" id="bBrake">브레이크<small>+핸들 = 드리프트</small></button>
@@ -287,6 +294,12 @@ tr.me td{color:var(--signal)}
     <p class="note" id="carNote" hidden></p>
     </div>
     <div class="col">
+    <div class="row"><span class="lab">조작</span>
+      <div class="seg ctrlSeg" role="group" aria-label="조작 방식">
+        <button data-c="pad" aria-pressed="true">핸들 패드</button>
+        <button data-c="btn" aria-pressed="false">좌우 버튼</button>
+      </div>
+    </div>
     <div class="row"><span class="lab">난이도</span>
       <div class="seg" id="diffSeg">
         <button data-d="normal" aria-pressed="false">보통</button>
@@ -306,7 +319,7 @@ tr.me td{color:var(--signal)}
     </div>
     <p class="note" id="fsNote" hidden></p>
     <div class="row"><button class="go" id="btnStart">출발</button><button class="go ghost" id="btnMp">멀티플레이</button></div>
-    <p class="help"><b>왼쪽 패드</b> 핸들 · <b>브레이크+핸들</b> 드리프트 시작, 핸들만 유지하면 계속되고 오래 끌수록 터보가 세져요 · <b>NITRO</b> 부스트(드리프트와 점프로 충전) · <b>↺</b> 트랙 복귀<br>폰이 버벅이면 <b>네온 효과</b>를 끄세요. 키보드: 방향키/WASD, Space 니트로, Shift 드리프트, R 복귀</p>
+    <p class="help"><b>핸들 패드</b>는 끌어서, <b>좌우 버튼</b>은 ◀ ▶를 눌러 조향해요(조작에서 선택) · <b>브레이크+핸들</b> 드리프트 시작, 핸들만 유지하면 계속되고 오래 끌수록 터보가 세져요 · <b>NITRO</b> 부스트(드리프트와 점프로 충전) · <b>↺</b> 트랙 복귀<br>폰이 버벅이면 <b>네온 효과</b>를 끄세요. 키보드: 방향키/WASD, Space 니트로, Shift 드리프트, R 복귀</p>
     <div class="best" id="bestLbl"></div>
     </div>
   </div>
@@ -317,6 +330,12 @@ tr.me td{color:var(--signal)}
     <h2>일시정지</h2>
     <button class="go" id="btnResume">계속</button>
     <div class="row"><button class="go ghost" id="btnRestart">재시작</button><button class="go ghost" id="btnMenu">메뉴</button></div>
+    <div class="row"><span class="lab">조작</span>
+      <div class="seg ctrlSeg" role="group" aria-label="조작 방식">
+        <button data-c="pad" aria-pressed="true">핸들 패드</button>
+        <button data-c="btn" aria-pressed="false">좌우 버튼</button>
+      </div>
+    </div>
     <div class="row"><button class="tog" id="togLand2" aria-pressed="true">가로 모드</button><button class="tog" id="togFs2" aria-pressed="false">전체화면</button></div>
     <p class="note" id="fsNote2" hidden></p>
   </div>
@@ -390,8 +409,9 @@ const TURBO_T=[0,0.6,1.0,1.5], TURBO_A=[0,9,13,17], TURBO_KICK=[0,2,3.5,5], DRIF
 const LAPS=3;
 const wmaxFn=s=>{ let w=Math.min(2.6,GRIP*G*1.45/Math.max(s,1)); if(s<7) w*=Math.max(s,0.5)/7; return w; };
 const DIFF={normal:{skill:0.85,rb:0.04,pwr:0.9,label:'보통'},hard:{skill:0.94,rb:0.08,pwr:0.97,label:'어려움'},hell:{skill:1.0,rb:0.13,pwr:1.02,label:'지옥'}};
-const settings={diff:'hard',auto:true,sound:true,music:true,gfx:'high',land:true,nick:'',map:'city'};
+const settings={diff:'hard',auto:true,sound:true,music:true,gfx:'high',land:true,nick:'',map:'city',ctrl:'pad'};
 try{const s=JSON.parse(localStorage.getItem('bgp-settings')||'null'); if(s) Object.assign(settings,s);}catch(e){}
+if(settings.ctrl!=='btn') settings.ctrl='pad';
 const saveSettings=()=>{try{localStorage.setItem('bgp-settings',JSON.stringify(settings));}catch(e){}};
 
 /* ================= maps ================= */
@@ -1845,12 +1865,13 @@ function aiDrive(car,dt){
 }
 
 /* ================= input ================= */
-const input={touchSteer:null,gas:false,brake:false,nitro:false,kL:false,kR:false,kGas:false,kBrake:false,kNitro:false};
+const input={touchSteer:null,gas:false,brake:false,nitro:false,tL:false,tR:false,kL:false,kR:false,kGas:false,kBrake:false,kNitro:false};
 function playerControl(car,dt){
   const c=car.ctrl;
   const touch=input.touchSteer!==null;
-  const s=touch?input.touchSteer:(input.kR?1:0)-(input.kL?1:0);
-  c.steer+=(s-c.steer)*Math.min(1,dt*(touch?16:7));
+  const btn=input.tL||input.tR;
+  const s=touch?input.touchSteer:((input.kR||input.tR)?1:0)-((input.kL||input.tL)?1:0);
+  c.steer+=(s-c.steer)*Math.min(1,dt*(touch?16:btn?10:7));
   const br=input.brake||input.kBrake;
   c.brake=br?1:0;
   c.drift=br&&Math.abs(c.steer)>0.25;
@@ -2357,6 +2378,8 @@ const bestKey=()=>MAP.id==='city'?'bgp-best-'+settings.diff:'bgp-best-'+MAP.id+'
 function getBest(){ try{ const v=parseFloat(localStorage.getItem(bestKey())); return isFinite(v)?v:Infinity; }catch(e){ return Infinity; } }
 function saveBest(t){ if(!isFinite(t)) return; if(t<getBest()){ try{localStorage.setItem(bestKey(),String(t));}catch(e){} } }
 function refreshMenu(){
+  document.querySelectorAll('.ctrlSeg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.c===settings.ctrl)));
+  el.controls.classList.toggle('btns',settings.ctrl==='btn');
   document.querySelectorAll('#diffSeg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.d===settings.diff)));
   $('#togAuto').setAttribute('aria-pressed',String(settings.auto)); $('#togGfx').setAttribute('aria-pressed',String(settings.gfx!=='low')); $('#togSound').setAttribute('aria-pressed',String(settings.sound)); $('#togMusic').setAttribute('aria-pressed',String(settings.music));
   const b=getBest(); $('#bestLbl').innerHTML=isFinite(b)?`최고 랩 <b>${fmt(b)}</b> · ${DIFF[settings.diff].label}`:`${DIFF[settings.diff].label} 기록 없음`;
@@ -2845,7 +2868,9 @@ if(!HEADLESS){
   const padUp=e=>{ padPts.delete(e.pointerId); padApply(); };
   pad.addEventListener('pointerup',padUp); pad.addEventListener('pointercancel',padUp); pad.addEventListener('lostpointercapture',padUp);
   const hold=(node,key)=>{ const ids=new Set(); node.addEventListener('pointerdown',e=>{e.preventDefault(); ids.add(e.pointerId); try{node.setPointerCapture(e.pointerId);}catch(_){} input[key]=true; node.classList.add('on');}); const up=e=>{ ids.delete(e.pointerId); if(!ids.size){input[key]=false; node.classList.remove('on');} }; node.addEventListener('pointerup',up); node.addEventListener('pointercancel',up); node.addEventListener('lostpointercapture',up); };
-  hold($('#bGas'),'gas'); hold($('#bBrake'),'brake'); hold($('#bNitro'),'nitro');
+  hold($('#bGas'),'gas'); hold($('#bBrake'),'brake'); hold($('#bNitro'),'nitro'); hold($('#bLeft'),'tL'); hold($('#bRight'),'tR');
+  document.querySelectorAll('.ctrlSeg button').forEach(b=>b.addEventListener('click',()=>{ settings.ctrl=b.dataset.c==='btn'?'btn':'pad'; saveSettings();
+    input.touchSteer=null; input.tL=false; input.tR=false; padPts.clear(); knob.style.transform=''; pad.classList.remove('on'); ['#bLeft','#bRight'].forEach(id=>$(id).classList.remove('on')); refreshMenu(); }));
   document.addEventListener('contextmenu',e=>e.preventDefault());
   const keys={ArrowLeft:'kL',KeyA:'kL',ArrowRight:'kR',KeyD:'kR',ArrowUp:'kGas',KeyW:'kGas',ArrowDown:'kBrake',KeyS:'kBrake',ShiftLeft:'kBrake',ShiftRight:'kBrake',Space:'kNitro'};
   window.addEventListener('keydown',e=>{ if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')) return; if(keys[e.code]){ input[keys[e.code]]=true; e.preventDefault(); } if(e.code==='KeyR'&&player&&!player.destroyed&&race.state==='run') player.respawn(); if(e.code==='KeyP'||e.code==='Escape') race.state==='paused'?resume():pause(); if(e.code==='Enter'&&!el.menu.hidden) startRace(); if(e.code==='KeyF') toggleFs(); });
