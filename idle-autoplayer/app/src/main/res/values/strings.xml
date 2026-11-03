@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">방치형 오토</string>
+    <string name="service_label">방치형 오토 (자동 터치)</string>
+    <string name="service_description">방치형 게임을 대신 플레이해 주는 자동 터치 서비스예요. 사용자가 지정한 위치를 정해진 간격으로 탭·스와이프하고, 화면 위에 조작 패널을 띄워요. 화면 내용은 읽거나 저장하지 않아요. 재생 중 볼륨 아래 버튼을 누르면 즉시 멈춰요.</string>
+</resources>
