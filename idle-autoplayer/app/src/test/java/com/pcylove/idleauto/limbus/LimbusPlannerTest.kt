@@ -6,7 +6,7 @@ import org.junit.Test
 
 class LimbusPlannerTest {
 
-    private fun clashOf(plan: List<Assignment>, s: Int) = plan.first { it.skillIndex == s }.target
+    private fun t(plan: Plan, s: Int) = plan.target(s)
 
     @Test
     fun `매우 우세와 우세만 합으로 잡고 열세는 피한다`() {
@@ -17,15 +17,27 @@ class LimbusPlannerTest {
             mapOf((0 to 0) to Clash.DOMINATING, (1 to 1) to Clash.FAVORED, (2 to 2) to Clash.STRUGGLING)
         )
         val plan = LimbusPlanner.plan(board)
-        assertEquals(Target.ClashWith(0, Clash.DOMINATING), clashOf(plan, 0))
-        assertEquals(Target.ClashWith(1, Clash.FAVORED), clashOf(plan, 1))
-        // 수감자3 은 열세라 합 대신 다른 적 슬롯을 일방 공격 (슬롯 0,1 은 수감자3을 노리지 않음)
-        assertTrue(clashOf(plan, 2) is Target.Attack)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0))
+        assertEquals(Target.ClashWith(1, Clash.FAVORED), t(plan, 1))
+        // 수감자3 은 열세 → 공격 대신 그 공격을 방어 스킬로 받는다
+        assertEquals(Target.Defend(2), t(plan, 2))
     }
 
     @Test
-    fun `적 슬롯 하나에는 우리 스킬 하나만 붙는다`() {
-        // 수감자1 의 스킬 두 개가 같은 적 슬롯에 매우 우세 → 하나만 합, 나머지는 다른 곳
+    fun `열세일 때 방어 옵션을 끄면 일방 공격으로 돌린다`() {
+        val skills = listOf(SinnerSkill(1, 1), SinnerSkill(3, 1))
+        val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(11, 1, 3))
+        val board = Board(
+            skills, slots, listOf(Enemy(10), Enemy(11)),
+            mapOf((0 to 0) to Clash.DOMINATING, (1 to 1) to Clash.STRUGGLING)
+        )
+        val plan = LimbusPlanner.plan(board, PlanOptions(defendOnBad = false))
+        // 수감자3 이 합 없이 일방 공격할 수 있는 자리는 슬롯0 (수감자1을 노리고, 속도 0 이라 못 뺏음)
+        assertEquals(Target.Attack(0), t(plan, 1))
+    }
+
+    @Test
+    fun `적 슬롯 하나에는 우리 합 하나만 붙는다`() {
         val skills = listOf(SinnerSkill(1, 1), SinnerSkill(1, 2))
         val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(11, 1, null))
         val board = Board(
@@ -33,26 +45,21 @@ class LimbusPlannerTest {
             mapOf((0 to 0) to Clash.DOMINATING, (1 to 0) to Clash.DOMINATING)
         )
         val plan = LimbusPlanner.plan(board)
-        val clashers = plan.filter { it.target is Target.ClashWith }
-        assertEquals(1, clashers.size)
-        assertEquals(Target.Attack(1), plan.first { it.target !is Target.ClashWith }.target)
+        assertEquals(1, plan.assignments.count { it.target is Target.ClashWith })
+        assertEquals(Target.Attack(1), plan.assignments.first { it.target !is Target.ClashWith }.target)
     }
 
     @Test
     fun `남는 스킬은 흐트러진 적을 일방 공격한다`() {
         val skills = listOf(SinnerSkill(1, 1), SinnerSkill(2, 1))
-        val slots = listOf(
-            EnemySlot(10, 1, 1),      // 수감자1을 노림, 매우 우세
-            EnemySlot(11, 1, null),   // 흐트러진 적
-            EnemySlot(12, 1, null),   // 멀쩡한 적
-        )
+        val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(11, 1, null), EnemySlot(12, 1, null))
         val board = Board(
             skills, slots, listOf(Enemy(10), Enemy(11, staggered = true), Enemy(12)),
             mapOf((0 to 0) to Clash.DOMINATING)
         )
         val plan = LimbusPlanner.plan(board)
-        assertEquals(Target.ClashWith(0, Clash.DOMINATING), clashOf(plan, 0))
-        assertEquals(Target.Attack(1), clashOf(plan, 1))
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0))
+        assertEquals(Target.Attack(1), t(plan, 1))
     }
 
     @Test
@@ -60,43 +67,84 @@ class LimbusPlannerTest {
         val skills = listOf(SinnerSkill(1, 1))
         val slots = listOf(EnemySlot(10, 1, null), EnemySlot(11, 1, null))
         val board = Board(skills, slots, listOf(Enemy(10, hpRatio = 0.9f), Enemy(11, hpRatio = 0.2f)), emptyMap())
-        assertEquals(Target.Attack(1), clashOf(LimbusPlanner.plan(board), 0))
+        assertEquals(Target.Attack(1), t(LimbusPlanner.plan(board), 0))
     }
 
     @Test
     fun `매칭은 전체 합의 질을 최대로 한다`() {
-        // 수감자1: 슬롯A 매우우세, 슬롯B 우세 / 수감자2: 슬롯A 우세, 슬롯B 없음
-        // 탐욕적으로 1→A 를 잡으면 2 는 합을 못 잡지만, 1→B, 2→A 로 두 개 다 잡는 게 낫다
+        // 수감자1: 슬롯0 매우우세, 슬롯1 우세 / 수감자2: 슬롯2 우세 만 가능 → 둘 다 합을 잡는 배치
         val skills = listOf(SinnerSkill(1, 1), SinnerSkill(2, 1))
         val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(10, 2, 1), EnemySlot(11, 1, 2))
-        // 슬롯2(인덱스 2)는 수감자2를 노림. 수감자1 입장에서 슬롯0,1 둘 다 서로 노림.
         val board = Board(
             skills, slots, listOf(Enemy(10), Enemy(11)),
             mapOf((0 to 0) to Clash.DOMINATING, (0 to 1) to Clash.FAVORED, (1 to 2) to Clash.FAVORED)
         )
         val plan = LimbusPlanner.plan(board)
-        assertEquals(Target.ClashWith(0, Clash.DOMINATING), clashOf(plan, 0))
-        assertEquals(Target.ClashWith(2, Clash.FAVORED), clashOf(plan, 1))
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0))
+        assertEquals(Target.ClashWith(2, Clash.FAVORED), t(plan, 1))
     }
 
     @Test
-    fun `모든 적 슬롯이 나를 노리면 가장 덜 나쁜 합이라도 잡는다`() {
+    fun `빠른 수감자가 느린 동료를 노리는 적 공격의 합을 뺏어온다`() {
+        // 적 슬롯(속도 3)이 수감자2(속도 2)를 노림. 수감자2 는 열세, 수감자1(속도 5)은 매우 우세.
+        val skills = listOf(SinnerSkill(1, 1, speed = 5), SinnerSkill(2, 1, speed = 2))
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 2, speed = 3), EnemySlot(11, 1, null, speed = 1))
+        val board = Board(
+            skills, slots, listOf(Enemy(10), Enemy(11)),
+            mapOf((0 to 0) to Clash.DOMINATING, (1 to 0) to Clash.STRUGGLING)
+        )
+        val plan = LimbusPlanner.plan(board)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0))
+        // 수감자2 는 이제 보호받으니 방어 대신 남은 적을 일방 공격. 슬롯1 은 속도 1 < 2 라 합이 성립해 버리므로(예측 없음=UNKNOWN) 피하고,
+        // 슬롯0 은 이미 합 담당이 있어 거기 추가로 붙어 일방 공격.
+        assertTrue(t(plan, 1) is Target.Attack)
+        assertTrue(plan.notes.any { it.contains("뺏어옴") })
+    }
+
+    @Test
+    fun `속도가 느리거나 같으면 합을 뺏어오지 못한다`() {
+        val skills = listOf(SinnerSkill(1, 1, speed = 3))
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 2, speed = 3))
+        val board = Board(skills, slots, listOf(Enemy(10)), mapOf((0 to 0) to Clash.DOMINATING))
+        // 같은 속도 → 못 뺏음 → 합이 아니라 일방 공격 판정
+        assertEquals(Target.Attack(0), t(LimbusPlanner.plan(board), 0))
+        // 옵션으로 '같으면 뺏는다'로 바꾸면 합
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(LimbusPlanner.plan(board, PlanOptions(equalSpeedSteals = true)), 0))
+    }
+
+    @Test
+    fun `아무도 못 막는 공격은 보통 합으로라도 막는다`() {
+        val skills = listOf(SinnerSkill(1, 1))
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 1), EnemySlot(11, 1, null))
+        val board = Board(skills, slots, listOf(Enemy(10), Enemy(11)), mapOf((0 to 0) to Clash.NEUTRAL))
+        assertEquals(Target.ClashWith(0, Clash.NEUTRAL), t(LimbusPlanner.plan(board), 0))
+        // 옵션을 끄면 보통 합을 피하고 다른 적을 일방 공격
+        assertEquals(Target.Attack(1), t(LimbusPlanner.plan(board, PlanOptions(coverWithNeutral = false)), 0))
+    }
+
+    @Test
+    fun `모든 적 슬롯이 나를 노리고 전부 나쁘면 방어로 받는다`() {
         val skills = listOf(SinnerSkill(1, 1))
         val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(10, 2, 1))
         val board = Board(
             skills, slots, listOf(Enemy(10)),
             mapOf((0 to 0) to Clash.HOPELESS, (0 to 1) to Clash.STRUGGLING)
         )
-        assertEquals(Target.ClashWith(1, Clash.STRUGGLING), clashOf(LimbusPlanner.plan(board), 0))
+        assertTrue(t(LimbusPlanner.plan(board), 0) is Target.Defend)
+        // 방어 옵션이 꺼져 있으면 가장 덜 나쁜 합
+        assertEquals(Target.ClashWith(1, Clash.STRUGGLING), t(LimbusPlanner.plan(board, PlanOptions(defendOnBad = false)), 0))
     }
 
     @Test
-    fun `보통 허용 옵션`() {
-        val skills = listOf(SinnerSkill(1, 1))
-        val slots = listOf(EnemySlot(10, 1, 1), EnemySlot(11, 1, null))
-        val board = Board(skills, slots, listOf(Enemy(10), Enemy(11)), mapOf((0 to 0) to Clash.NEUTRAL))
-        assertTrue(clashOf(LimbusPlanner.plan(board), 0) is Target.Attack)
-        assertEquals(Target.ClashWith(0, Clash.NEUTRAL), clashOf(LimbusPlanner.plan(board, PlanOptions(allowNeutral = true)), 0))
+    fun `지정 순서는 일방 공격 다음에 합이 온다`() {
+        // 수감자1 스킬1 은 슬롯0 과 매우 우세 합, 스킬2 는 같은 슬롯0 에 일방 공격으로 붙는 상황
+        val skills = listOf(SinnerSkill(1, 1, power = 10), SinnerSkill(1, 2, power = 5))
+        val slots = listOf(EnemySlot(10, 1, 1))
+        val board = Board(skills, slots, listOf(Enemy(10)), mapOf((0 to 0) to Clash.DOMINATING, (1 to 0) to Clash.STRUGGLING))
+        val plan = LimbusPlanner.plan(board)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0))
+        assertEquals(Target.Attack(0), t(plan, 1))
+        assertEquals(listOf(1, 0), plan.applyOrder) // 일방 공격(스킬2) 먼저, 합(스킬1) 마지막
     }
 
     @Test
@@ -104,6 +152,14 @@ class LimbusPlannerTest {
         val skills = listOf(SinnerSkill(1, 1))
         val slots = listOf(EnemySlot(10, 1, 1))
         val board = Board(skills, slots, listOf(Enemy(10)), mapOf((0 to 0) to Clash.DOMINATING))
-        assertEquals("수감자1 스킬1 → 적10 슬롯1 합 (매우 우세)", LimbusPlanner.describe(board, LimbusPlanner.plan(board)))
+        assertEquals("1. 수감자1 스킬1 → 적10 슬롯1 합 (매우 우세)", LimbusPlanner.describe(board, LimbusPlanner.plan(board)))
+    }
+
+    @Test
+    fun `예측 글자 파싱`() {
+        assertEquals(Clash.DOMINATING, Clash.fromLabel("매우 우세"))
+        assertEquals(Clash.STRUGGLING, Clash.fromLabel("불리"))
+        assertEquals(Clash.HOPELESS, Clash.fromLabel("매우열세"))
+        assertEquals(Clash.UNKNOWN, Clash.fromLabel("???"))
     }
 }
