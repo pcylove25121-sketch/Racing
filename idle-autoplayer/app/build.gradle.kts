@@ -33,4 +33,5 @@ android {
 
 // 외부 라이브러리 없이 안드로이드 기본 API 만 써요. 그래서 의존성이 비어 있어요.
 dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
