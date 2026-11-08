@@ -38,6 +38,7 @@ class MainActivity : Activity() {
         content.removeAllViews()
         renderServiceCard()
         renderScripts()
+        renderLimbus()
         renderHelp()
     }
 
@@ -156,6 +157,45 @@ class MainActivity : Activity() {
         service.overlay.open(s)
         Toast.makeText(this, "패널이 떠 있어요. 이제 게임을 실행하세요.\n＋ 타겟 추가 · ● 녹화 · ▶ 시작 · 볼륨↓ 비상 정지", Toast.LENGTH_LONG).show()
         moveTaskToBack(true)
+    }
+
+    // ───────────── 림버스 모드 (개발 중) ─────────────
+
+    private fun renderLimbus() {
+        val card = card()
+        card.addView(text("림버스 컴퍼니 향상된 자동전투 (개발 중)", 17f, bold = true))
+        card.space(6)
+        val dm = resources.displayMetrics
+        val profile = com.pcylove.idleauto.limbus.LimbusProfile.load(this)
+        val capture = if (com.pcylove.idleauto.limbus.ScreenCapture.isSupported()) "가능" else "불가 (안드로이드 11 이상 필요)"
+        card.addView(
+            text(
+                "기기: ${Build.MANUFACTURER} ${Build.MODEL} · 안드로이드 ${Build.VERSION.RELEASE}\n" +
+                    "화면: ${maxOf(dm.widthPixels, dm.heightPixels)}×${minOf(dm.widthPixels, dm.heightPixels)} (가로 기준) · 화면 읽기: $capture\n" +
+                    "보정: " + if (profile.needsCalibration) "아직 안 됨 (전투 스크린샷으로 영역·글자 색을 맞춰야 해요)" else profile.name,
+                13f, color = 0xFF6F6A8A.toInt()
+            )
+        )
+        card.space(6)
+        card.addView(
+            text(
+                "합 배치 판단 로직은 들어가 있어요. 지금 할 수 있는 건 화면 캡처 테스트예요. 패널의 📷 를 누르면 캡처가 되는지 확인하고, 캡처한 그림을 내 파일 → Android/data/com.pcylove.idleauto/files/Pictures 에 저장해요.",
+                13f
+            )
+        )
+        card.space(8)
+        card.addView(button("림버스 패널 열기") {
+            val service = AutoService.instance
+            if (service == null) {
+                Toast.makeText(this, "먼저 접근성 서비스를 켜 주세요.", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return@button
+            }
+            service.limbus.open()
+            Toast.makeText(this, "림버스 패널이 떠 있어요. 게임 전투 화면에서 📷 를 눌러 보세요.", Toast.LENGTH_LONG).show()
+            moveTaskToBack(true)
+        })
+        content.addView(card)
     }
 
     // ───────────── 3. 도움말 ─────────────

@@ -17,10 +17,13 @@ class AutoService : AccessibilityService() {
 
     lateinit var overlay: OverlayController
         private set
+    lateinit var limbus: com.pcylove.idleauto.limbus.LimbusOverlay
+        private set
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         overlay = OverlayController(this)
+        limbus = com.pcylove.idleauto.limbus.LimbusOverlay(this)
         instance = this
         Toast.makeText(this, "방치형 오토 준비 완료. 앱에서 매크로를 열어 주세요.", Toast.LENGTH_SHORT).show()
     }
@@ -41,12 +44,14 @@ class AutoService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         if (this::overlay.isInitialized) overlay.close()
+        if (this::limbus.isInitialized) limbus.close()
         instance = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         if (this::overlay.isInitialized) overlay.close()
+        if (this::limbus.isInitialized) limbus.close()
         instance = null
         super.onDestroy()
     }
