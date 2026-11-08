@@ -44,8 +44,32 @@ enum class Clash(val label: String, val score: Int, val winRate: IntRange) {
     }
 }
 
-/** 우리 쪽 스킬 하나. speed 는 그 슬롯의 속도 주사위 값, power 는 대미지 추정치(없으면 0). */
-data class SinnerSkill(val sinner: Int, val slot: Int, val speed: Int = 0, val power: Int = 0)
+/**
+ * 우리 쪽 스킬 하나. speed 는 그 슬롯의 속도 주사위 값.
+ * power 는 대미지 추정치 (SkillPower.estimate 로 계산, 모르면 rank 로 대충). rank 는 스킬 1/2/3 (모르면 0).
+ */
+data class SinnerSkill(val sinner: Int, val slot: Int, val speed: Int = 0, val power: Int = 0, val rank: Int = 0) {
+    /** 비교용 위력. 숫자를 못 읽었으면 스킬 등급(3 > 2 > 1)으로 대신해요. */
+    val strength: Int get() = if (power > 0) power else SkillPower.fromRank(rank)
+}
+
+/**
+ * 스킬 위력 대략 추정.
+ * 림버스 코인은 정신력(SP)에 따라 앞면 확률이 50% + SP% 로 변해요 (SP 45 → 95%, SP -45 → 5%).
+ * 기대 위력 = 기본 위력 + 코인 위력 × 코인 수 × 앞면 확률. (코인 위력이 음수인 스킬은 뒷면이 좋은 쪽이라 반대로 계산)
+ */
+object SkillPower {
+    fun headsChance(sanity: Int): Float = (0.5f + sanity.coerceIn(-45, 45) / 100f).coerceIn(0.05f, 0.95f)
+
+    fun estimate(basePower: Int, coinPower: Int, coins: Int, sanity: Int = 0): Int {
+        val p = headsChance(sanity)
+        val perCoin = if (coinPower >= 0) coinPower * p else coinPower * (1f - p)
+        return (basePower + perCoin * coins.coerceAtLeast(0)).toInt().coerceAtLeast(0)
+    }
+
+    /** 숫자를 못 읽었을 때: 스킬 3 이 보통 가장 세다는 일반 경향으로 대충 */
+    fun fromRank(rank: Int): Int = when (rank) { 3 -> 12; 2 -> 8; 1 -> 5; else -> 0 }
+}
 
 /** 적 스킬 슬롯. targetSinner 는 이 적 스킬이 노리는 우리 수감자(없으면 null), speed 는 적 슬롯 속도. */
 data class EnemySlot(val enemy: Int, val slot: Int, val targetSinner: Int?, val speed: Int = 0)
@@ -116,6 +140,8 @@ data class PlanOptions(
     val focusLowHp: Boolean = true,
     /** 속도가 같을 때도 합을 뺏어올 수 있다고 볼지 (자료마다 달라 기본은 '못 뺏는다') */
     val equalSpeedSteals: Boolean = false,
+    /** 같은 예측 등급이면 약한 스킬로 합을 하고 강한 스킬은 아껴서 일방 공격(흐트러진 적)에 쓸지 */
+    val saveStrongSkills: Boolean = true,
 )
 
 object LimbusPlanner {
@@ -139,7 +165,7 @@ object LimbusPlanner {
                 else pred.score * 1000 +
                     (if (board.enemySlots[e].targetSinner != null) 300 else 0) + // 나(또는 동료)를 노리는 공격을 막는 가치
                     damageBonus(board, e, options) +
-                    board.skills[s].power.coerceIn(0, 299)
+                    clashSkillPreference(board.skills[s], options)
             }
         }
         for ((s, e) in maxWeightMatching(weight).withIndex()) {
@@ -161,7 +187,7 @@ object LimbusPlanner {
                         val s = free[i]; val e = uncovered[j]
                         val pred = board.prediction(s, e)
                         if (board.canClash(s, e, options.equalSpeedSteals) && pred == Clash.NEUTRAL)
-                            1000 + damageBonus(board, e, options) else NONE
+                            1000 + damageBonus(board, e, options) + clashSkillPreference(board.skills[s], options) else NONE
                     }
                 }
                 for ((i, j) in maxWeightMatching(w2).withIndex()) if (j >= 0) {
@@ -182,7 +208,7 @@ object LimbusPlanner {
                 // 내 스킬 중 이 공격과의 예측이 전부 나쁠 때만 (보통 이상이면 1단계/2a 에서 이미 잡혔거나 옵션으로 꺼진 것)
                 val allBad = mine.all { board.prediction(it, e).isBad }
                 if (!allBad) continue
-                val s = mine.minByOrNull { board.skills[it].power } ?: continue // 약한 스킬을 방어로 돌림
+                val s = mine.minByOrNull { board.skills[it].strength } ?: continue // 약한 스킬을 방어로 돌림
                 clasherOfSlot[e] = s
                 result[s] = Assignment(s, Target.Defend(e))
                 notes += "${name(board, s)}: 적${board.enemySlots[e].enemy} 공격이 열세라 방어 스킬로 받음"
@@ -191,7 +217,7 @@ object LimbusPlanner {
 
         // ── 3단계: 남는 스킬은 일방 공격 ──
         val leftovers = (0 until n).filter { result[it] == null }
-            .sortedByDescending { board.skills[it].power } // 센 스킬부터 좋은 자리에
+            .sortedByDescending { board.skills[it].strength } // 센 스킬부터 좋은 자리(흐트러진 적)에
         for (s in leftovers) {
             // 합이 성립하지 않는 자리만 고른다 (성립하면 열세 합이 될 수 있음)
             val best = (0 until m)
@@ -238,6 +264,16 @@ object LimbusPlanner {
     }
 
     private fun name(board: Board, s: Int) = "수감자${board.skills[s].sinner} 스킬${board.skills[s].slot}"
+
+    /**
+     * 같은 예측 등급 안에서 어떤 스킬로 합을 할지.
+     * 강한 스킬을 아끼는 옵션이면 약할수록 +, 아니면 강할수록 + (합에서 이겼을 때 피해가 더 크니까).
+     * 등급 점수(×1000)보다 항상 작게 유지해서 등급을 뒤집지는 않아요.
+     */
+    private fun clashSkillPreference(skill: SinnerSkill, o: PlanOptions): Int {
+        val st = skill.strength.coerceIn(0, 199)
+        return if (o.saveStrongSkills) 199 - st else st
+    }
 
     private fun damageBonus(board: Board, slotIdx: Int, o: PlanOptions): Int {
         val enemy = board.enemy(board.enemySlots[slotIdx].enemy) ?: return 0

@@ -162,4 +162,63 @@ class LimbusPlannerTest {
         assertEquals(Clash.HOPELESS, Clash.fromLabel("매우열세"))
         assertEquals(Clash.UNKNOWN, Clash.fromLabel("???"))
     }
+
+    @Test
+    fun `약한 스킬로도 매우 우세면 약한 스킬이 합을 하고 강한 스킬은 흐트러진 적을 친다`() {
+        val weak = SinnerSkill(1, 1, power = 5)
+        val strong = SinnerSkill(1, 2, power = 18)
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 1), EnemySlot(11, 1, null))
+        val board = Board(
+            listOf(weak, strong), slots, listOf(Enemy(10), Enemy(11, staggered = true)),
+            mapOf((0 to 0) to Clash.DOMINATING, (1 to 0) to Clash.DOMINATING)
+        )
+        val plan = LimbusPlanner.plan(board)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0)) // 약한 스킬이 합
+        assertEquals(Target.Attack(1), t(plan, 1))                       // 강한 스킬이 흐트러진 적
+        // 옵션을 끄면 강한 스킬이 합
+        val plan2 = LimbusPlanner.plan(board, PlanOptions(saveStrongSkills = false))
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan2, 1))
+    }
+
+    @Test
+    fun `약한 스킬이 우세고 강한 스킬이 매우 우세면 등급이 우선한다`() {
+        val weak = SinnerSkill(1, 1, power = 5)
+        val strong = SinnerSkill(1, 2, power = 18)
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 1), EnemySlot(11, 1, null))
+        val board = Board(
+            listOf(weak, strong), slots, listOf(Enemy(10), Enemy(11, staggered = true)),
+            mapOf((0 to 0) to Clash.FAVORED, (1 to 0) to Clash.DOMINATING)
+        )
+        val plan = LimbusPlanner.plan(board)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 1))
+        assertEquals(Target.Attack(1), t(plan, 0))
+    }
+
+    @Test
+    fun `위력을 못 읽으면 스킬 등급으로 강약을 가른다`() {
+        val s1 = SinnerSkill(1, 1, rank = 1)
+        val s3 = SinnerSkill(1, 2, rank = 3)
+        val slots = listOf(EnemySlot(10, 1, targetSinner = 1), EnemySlot(11, 1, null))
+        val board = Board(
+            listOf(s1, s3), slots, listOf(Enemy(10), Enemy(11, staggered = true)),
+            mapOf((0 to 0) to Clash.DOMINATING, (1 to 0) to Clash.DOMINATING)
+        )
+        val plan = LimbusPlanner.plan(board)
+        assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0)) // 스킬1(약함)이 합
+        assertEquals(Target.Attack(1), t(plan, 1))                       // 스킬3(강함)이 흐트러진 적
+    }
+
+    @Test
+    fun `스킬 위력 추정`() {
+        // 기본 4, 코인 +3 × 2개, 정신력 0 → 4 + 3×2×0.5 = 7
+        assertEquals(7, SkillPower.estimate(4, 3, 2, 0))
+        // 정신력 45 → 앞면 95% → 4 + 3×2×0.95 = 9.7 → 9
+        assertEquals(9, SkillPower.estimate(4, 3, 2, 45))
+        // 음수 코인(-2 × 3개) 은 뒷면이 좋음: 정신력 -45 → 뒷면 95% → 6 + (-2)×0.95×3 = 0.3 → 0 (최소 0)
+        assertEquals(0, SkillPower.estimate(6, -2, 3, -45))
+        // 코인 없음
+        assertEquals(10, SkillPower.estimate(10, 5, 0))
+        assertEquals(0.95f, SkillPower.headsChance(45), 0.001f)
+        assertEquals(0.05f, SkillPower.headsChance(-45), 0.001f)
+    }
 }
