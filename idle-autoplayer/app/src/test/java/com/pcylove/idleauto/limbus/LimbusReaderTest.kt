@@ -4,17 +4,26 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.awt.image.BufferedImage
-import javax.imageio.ImageIO
+import java.io.InputStream
 
 /** 갤럭시 S25 실제 스크린샷으로 인식기를 검증해요. (지정 전 / 승률 버튼 누른 뒤) */
 class LimbusReaderTest {
 
+    /**
+     * 안드로이드 단위 테스트는 android.jar 기준으로 컴파일돼서 javax.imageio 를 직접 참조하면 컴파일이 안 돼요.
+     * 실행은 일반 JVM 이라 리플렉션으로 ImageIO 를 불러 씁니다.
+     */
     private fun load(path: String): ArrayPixels {
-        val img: BufferedImage = ImageIO.read(javaClass.getResourceAsStream(path) ?: error("리소스 없음: $path"))
-        val d = IntArray(img.width * img.height)
-        img.getRGB(0, 0, img.width, img.height, d, 0, img.width)
-        return ArrayPixels(img.width, img.height, d)
+        val stream: InputStream = javaClass.getResourceAsStream(path) ?: error("리소스 없음: $path")
+        val imageIo = Class.forName("javax.imageio.ImageIO")
+        val img = imageIo.getMethod("read", InputStream::class.java).invoke(null, stream)!!
+        val cls = img.javaClass
+        val w = cls.getMethod("getWidth").invoke(img) as Int
+        val h = cls.getMethod("getHeight").invoke(img) as Int
+        val d = IntArray(w * h)
+        cls.getMethod("getRGB", Int::class.java, Int::class.java, Int::class.java, Int::class.java, IntArray::class.java, Int::class.java, Int::class.java)
+            .invoke(img, 0, 0, w, h, d, 0, w)
+        return ArrayPixels(w, h, d)
     }
 
     private fun templates(): Map<LimbusReader.LabelKind, GrayImage> = mapOf(
