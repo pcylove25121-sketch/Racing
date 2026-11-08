@@ -18,7 +18,8 @@ package com.pcylove.idleauto.limbus
  * 사용자 지정 규칙:
  *  1. 매우 우세 → 우세 순으로 합을 잡는다. 열세·매우 열세 합은 하지 않는다. (보통은 옵션)
  *  2. 적 스킬 하나에는 우리 합 하나만 붙인다.
- *  3. 남는 스킬은 흐트러진 적 → 체력 낮은 적 순으로 일방 공격한다.
+ *  3. 남는 스킬은 일방 공격. 처치 가능 → 흐트러뜨리기 가능 순으로 가장 싼 스킬 조합을 쓰고,
+ *     나머지는 강한 스킬은 멀쩡한 적(선에 가까운 쪽), 약한 스킬은 흐트러진 적(2배)에게 쓴다. (AttackAllocator)
  */
 
 /** 합 예측. 게임 한국어 표기 그대로 (열세는 '불리'로도 표기되는 자료가 있어 둘 다 받아요). */
@@ -48,7 +49,10 @@ enum class Clash(val label: String, val score: Int, val winRate: IntRange) {
  * 우리 쪽 스킬 하나. speed 는 그 슬롯의 속도 주사위 값.
  * power 는 대미지 추정치 (SkillPower.estimate 로 계산, 모르면 rank 로 대충). rank 는 스킬 1/2/3 (모르면 0).
  */
-data class SinnerSkill(val sinner: Int, val slot: Int, val speed: Int = 0, val power: Int = 0, val rank: Int = 0) {
+data class SinnerSkill(
+    val sinner: Int, val slot: Int, val speed: Int = 0, val power: Int = 0, val rank: Int = 0,
+    val attackType: AttackType? = null,
+) {
     /** 비교용 위력. 숫자를 못 읽었으면 스킬 등급(3 > 2 > 1)으로 대신해요. */
     val strength: Int get() = if (power > 0) power else SkillPower.fromRank(rank)
 }
@@ -74,8 +78,31 @@ object SkillPower {
 /** 적 스킬 슬롯. targetSinner 는 이 적 스킬이 노리는 우리 수감자(없으면 null), speed 는 적 슬롯 속도. */
 data class EnemySlot(val enemy: Int, val slot: Int, val targetSinner: Int?, val speed: Int = 0)
 
-/** 적 하나의 상태. hpRatio 0.0~1.0. */
-data class Enemy(val id: Int, val staggered: Boolean = false, val hpRatio: Float = 1f)
+/** 물리 공격 유형 */
+enum class AttackType(val label: String) { SLASH("참격"), PIERCE("관통"), BLUNT("타격") }
+
+/** 물리 내성 단계와 피해 배율 */
+enum class Resist(val label: String, val multiplier: Float) {
+    INEFFECTIVE("내성", 0.5f), ENDURED("견딤", 0.75f), NORMAL("보통", 1f), FATAL("취약", 2f)
+}
+
+/**
+ * 적 하나의 상태.
+ *  - hpRatio: 체력 비율 0.0~1.0 (숫자를 모를 때 쓰는 값)
+ *  - hp/maxHp: 체력 숫자 (읽었으면 >0). staggerThresholds: 흐트러짐 선의 체력값들 (예: [600, 300])
+ *  - staggerLevel: 흐트러짐 1 / + 2 / ++ 3
+ *  - resists: 물리 유형별 내성 (모르면 보통)
+ */
+data class Enemy(
+    val id: Int,
+    val staggered: Boolean = false,
+    val hpRatio: Float = 1f,
+    val hp: Int = 0,
+    val maxHp: Int = 0,
+    val staggerThresholds: List<Int> = emptyList(),
+    val staggerLevel: Int = if (staggered) 1 else 0,
+    val resists: Map<AttackType, Resist> = emptyMap(),
+)
 
 /** 한 턴의 판 전체. predictions 의 키는 (스킬 인덱스, 적 슬롯 인덱스). 합이 가능한 쌍에만 값이 있어요. */
 data class Board(
@@ -215,29 +242,31 @@ object LimbusPlanner {
             }
         }
 
-        // ── 3단계: 남는 스킬은 일방 공격 ──
+        // ── 3단계: 남는 스킬은 일방 공격. 어느 적을 칠지는 AttackAllocator 가 정한다 ──
         val leftovers = (0 until n).filter { result[it] == null }
-            .sortedByDescending { board.skills[it].strength } // 센 스킬부터 좋은 자리(흐트러진 적)에
-        for (s in leftovers) {
-            // 합이 성립하지 않는 자리만 고른다 (성립하면 열세 합이 될 수 있음)
-            val best = (0 until m)
-                .filter { e -> !board.canClash(s, e, options.equalSpeedSteals) }
-                .maxByOrNull { e -> attackScore(board, e, clasherOfSlot[e] >= 0, attackersOnSlot[e], options) }
-            if (best != null) {
-                attackersOnSlot[best]++
-                result[s] = Assignment(s, Target.Attack(best))
+
+        /** 이 스킬이 이 적에게 일방 공격으로 붙을 수 있는 슬롯 (합이 성립하지 않는 슬롯, 또는 이미 합 담당이 있는 슬롯) */
+        fun attackSlots(s: Int, enemyId: Int): List<Int> = (0 until m).filter { e ->
+            board.enemySlots[e].enemy == enemyId &&
+                (!board.canClash(s, e, options.equalSpeedSteals) || clasherOfSlot[e] >= 0)
+        }
+        val alloc = AttackAllocator.allocate(board, leftovers, { s, id ->
+            val slots = attackSlots(s, id)
+            when { slots.isEmpty() -> 0; slots.any { clasherOfSlot[it] < 0 } -> 2; else -> 1 }
+        }, options)
+        notes += alloc.notes.distinct()
+
+        for (s in leftovers.sortedByDescending { board.skills[it].strength }) {
+            val enemyId = alloc.targetEnemyOf[s]
+            val slots = enemyId?.let { attackSlots(s, it) } ?: emptyList()
+            if (slots.isNotEmpty()) {
+                // 합 담당이 없는 슬롯(순서가 꼬일 여지 없음) > 공격자가 적은 슬롯
+                val e = slots.minWithOrNull(compareBy<Int> { if (clasherOfSlot[it] >= 0) 1 else 0 }.thenBy { attackersOnSlot[it] })!!
+                attackersOnSlot[e]++
+                result[s] = Assignment(s, Target.Attack(e))
                 continue
             }
-            // 모든 적 슬롯과 합이 성립하는 경우:
-            // (1) 이미 합 담당이 있는 슬롯에 추가로 붙여 일방 공격 (합 담당을 뒤에 지정하면 내 스킬은 일방 공격이 됨)
-            val pile = (0 until m).filter { clasherOfSlot[it] >= 0 }
-                .maxByOrNull { e -> attackScore(board, e, true, attackersOnSlot[e], options) }
-            if (pile != null) {
-                attackersOnSlot[pile]++
-                result[s] = Assignment(s, Target.Attack(pile))
-                continue
-            }
-            // (2) 그것도 없으면 아직 아무도 안 붙은 슬롯 중 가장 덜 나쁜 합 (예측 모름은 맨 뒤)
+            // 어느 적에게도 일방 공격 자리가 없음: 아무도 안 붙은 슬롯 중 가장 덜 나쁜 합 (예측 모름은 맨 뒤)
             val fallback = (0 until m).filter { clasherOfSlot[it] < 0 }
                 .maxByOrNull { e -> board.prediction(s, e).score }
             if (fallback != null) {
@@ -278,16 +307,6 @@ object LimbusPlanner {
     private fun damageBonus(board: Board, slotIdx: Int, o: PlanOptions): Int {
         val enemy = board.enemy(board.enemySlots[slotIdx].enemy) ?: return 0
         return if (o.focusLowHp) ((1f - enemy.hpRatio) * 200).toInt() else 0
-    }
-
-    private fun attackScore(board: Board, slotIdx: Int, hasClasher: Boolean, attackers: Int, o: PlanOptions): Int {
-        val enemy = board.enemy(board.enemySlots[slotIdx].enemy) ?: return Int.MIN_VALUE / 2
-        var score = 0
-        if (o.preferStaggered && enemy.staggered) score += 10_000   // 흐트러진 적: 피해 2~3배, 반격 없음
-        if (o.focusLowHp) score += ((1f - enemy.hpRatio) * 1000).toInt()
-        if (!hasClasher) score += 200     // 합 담당이 있는 슬롯은 순서가 꼬일 여지가 있어 살짝 피함
-        score -= attackers * 50           // 같은 슬롯에 너무 몰리지 않게 (같은 적의 다른 슬롯으로 분산)
-        return score
     }
 
     private const val NONE = Int.MIN_VALUE / 4

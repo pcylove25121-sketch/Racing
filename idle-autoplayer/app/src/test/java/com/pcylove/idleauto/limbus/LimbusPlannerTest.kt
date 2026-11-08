@@ -174,7 +174,9 @@ class LimbusPlannerTest {
         )
         val plan = LimbusPlanner.plan(board)
         assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0)) // 약한 스킬이 합
-        assertEquals(Target.Attack(1), t(plan, 1))                       // 강한 스킬이 흐트러진 적
+        // 강한 스킬은 흐트러진 적(이미 2배)에 쓰면 낭비 → 멀쩡한 적10 에 일방 공격 (합 담당 뒤에 덧붙음)
+        assertEquals(Target.Attack(0), t(plan, 1))
+        assertEquals(listOf(1, 0), plan.applyOrder)
         // 옵션을 끄면 강한 스킬이 합
         val plan2 = LimbusPlanner.plan(board, PlanOptions(saveStrongSkills = false))
         assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan2, 1))
@@ -191,7 +193,7 @@ class LimbusPlannerTest {
         )
         val plan = LimbusPlanner.plan(board)
         assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 1))
-        assertEquals(Target.Attack(1), t(plan, 0))
+        assertEquals(Target.Attack(1), t(plan, 0)) // 약한 스킬은 흐트러진 적
     }
 
     @Test
@@ -205,7 +207,7 @@ class LimbusPlannerTest {
         )
         val plan = LimbusPlanner.plan(board)
         assertEquals(Target.ClashWith(0, Clash.DOMINATING), t(plan, 0)) // 스킬1(약함)이 합
-        assertEquals(Target.Attack(1), t(plan, 1))                       // 스킬3(강함)이 흐트러진 적
+        assertEquals(Target.Attack(0), t(plan, 1))                       // 스킬3(강함)은 멀쩡한 적에게
     }
 
     @Test
@@ -220,5 +222,77 @@ class LimbusPlannerTest {
         assertEquals(10, SkillPower.estimate(10, 5, 0))
         assertEquals(0.95f, SkillPower.headsChance(45), 0.001f)
         assertEquals(0.05f, SkillPower.headsChance(-45), 0.001f)
+    }
+
+    // ───────── 일방 공격 배분 (AttackAllocator) ─────────
+
+    @Test
+    fun `처치할 수 있으면 가장 약한 스킬로 끝낸다 (흐트러진 적은 2배)`() {
+        val weak = SinnerSkill(1, 1, power = 6)
+        val strong = SinnerSkill(2, 1, power = 20)
+        // 적10: 흐트러짐, 체력 10 → 약한 스킬 6×2 = 12 로 처치 가능. 적11: 멀쩡, 체력 100
+        val enemies = listOf(Enemy(10, staggered = true, hp = 10, maxHp = 100), Enemy(11, hp = 100, maxHp = 100))
+        val slots = listOf(EnemySlot(10, 1, null), EnemySlot(11, 1, null))
+        val plan = LimbusPlanner.plan(Board(listOf(weak, strong), slots, enemies, emptyMap()))
+        assertEquals(Target.Attack(0), t(plan, 0)) // 약한 스킬이 처치
+        assertEquals(Target.Attack(1), t(plan, 1)) // 강한 스킬은 멀쩡한 적
+        assertTrue(plan.notes.any { it.contains("처치") })
+    }
+
+    @Test
+    fun `강한 스킬로 멀쩡한 적을 흐트러짐 선 아래로 밀어 넣는다`() {
+        val weak = SinnerSkill(1, 1, power = 5)
+        val strong = SinnerSkill(2, 1, power = 18)
+        // 적10: 체력 70, 선 55 → 15 필요 → 강한 스킬(18)만 가능. 적11: 흐트러짐, 체력 80 (처치 불가)
+        val enemies = listOf(
+            Enemy(10, hp = 70, maxHp = 100, staggerThresholds = listOf(55, 20)),
+            Enemy(11, staggered = true, hp = 80, maxHp = 100),
+        )
+        val slots = listOf(EnemySlot(10, 1, null), EnemySlot(11, 1, null))
+        val plan = LimbusPlanner.plan(Board(listOf(weak, strong), slots, enemies, emptyMap()))
+        assertEquals(Target.Attack(0), t(plan, 1)) // 강한 스킬 → 선 넘기기
+        // 적10 이 이번 턴에 흐트러져서(체력 52) 약한 스킬도 2배로 들어감 → 체력이 더 낮은 적10 에 집중
+        assertEquals(Target.Attack(0), t(plan, 0))
+        assertTrue(plan.notes.any { it.contains("흐트러뜨리기") })
+    }
+
+    @Test
+    fun `선을 넘긴 뒤 같은 턴의 약한 스킬은 2배로 들어가 처치까지 이어진다`() {
+        val a = SinnerSkill(1, 1, power = 10)
+        val b = SinnerSkill(2, 1, power = 10)
+        val c = SinnerSkill(3, 1, power = 10)
+        // 체력 36, 선 30: 첫 스킬 10 → 26 (흐트러짐) → 다음 10×2=20 → 6 → 다음 20 → 처치. 세 개면 끝난다.
+        val enemies = listOf(Enemy(10, hp = 36, maxHp = 100, staggerThresholds = listOf(30)))
+        val slots = listOf(EnemySlot(10, 1, null))
+        val plan = LimbusPlanner.plan(Board(listOf(a, b, c), slots, enemies, emptyMap()))
+        assertTrue(plan.assignments.all { it.target == Target.Attack(0) })
+        assertTrue(plan.notes.any { it.contains("흐트러뜨리기") })
+        assertTrue(plan.notes.any { it.contains("처치") })
+    }
+
+    @Test
+    fun `물리 내성을 반영해 조합을 고른다`() {
+        val slash = SinnerSkill(1, 1, power = 10, attackType = AttackType.SLASH)
+        val blunt = SinnerSkill(2, 1, power = 10, attackType = AttackType.BLUNT)
+        // 적10 체력 15: 참격 내성(×0.5)=5, 타격 취약(×2)=20 → 타격 하나로 처치
+        val enemies = listOf(
+            Enemy(10, hp = 15, maxHp = 100, resists = mapOf(AttackType.SLASH to Resist.INEFFECTIVE, AttackType.BLUNT to Resist.FATAL)),
+            Enemy(11, hp = 100, maxHp = 100),
+        )
+        val slots = listOf(EnemySlot(10, 1, null), EnemySlot(11, 1, null))
+        val plan = LimbusPlanner.plan(Board(listOf(slash, blunt), slots, enemies, emptyMap()))
+        assertEquals(Target.Attack(0), t(plan, 1)) // 타격이 처치
+        assertEquals(Target.Attack(1), t(plan, 0)) // 참격은 다른 적
+    }
+
+    @Test
+    fun `체력 숫자를 몰라도 강한 스킬은 멀쩡한 적, 약한 스킬은 흐트러진 적`() {
+        val weak = SinnerSkill(1, 1, power = 5)
+        val strong = SinnerSkill(2, 1, power = 15)
+        val enemies = listOf(Enemy(10, staggered = true, hpRatio = 0.5f), Enemy(11, hpRatio = 0.4f), Enemy(12, hpRatio = 0.9f))
+        val slots = listOf(EnemySlot(10, 1, null), EnemySlot(11, 1, null), EnemySlot(12, 1, null))
+        val plan = LimbusPlanner.plan(Board(listOf(weak, strong), slots, enemies, emptyMap()))
+        assertEquals(Target.Attack(0), t(plan, 0)) // 약한 → 흐트러진 적
+        assertEquals(Target.Attack(1), t(plan, 1)) // 강한 → 멀쩡한 적 중 체력 낮은 쪽
     }
 }
