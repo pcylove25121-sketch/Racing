@@ -29,6 +29,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    sourceSets {
+        // 단위 테스트에서 라벨 템플릿(assets)을 리소스로 읽을 수 있게
+        getByName("test").resources.srcDir("src/main/assets")
+    }
 }
 
 // 외부 라이브러리 없이 안드로이드 기본 API 만 써요. 그래서 의존성이 비어 있어요.

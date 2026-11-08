@@ -21,11 +21,16 @@ data class LimbusProfile(
     var skillCards: MutableList<RectF> = mutableListOf(),
     /** 적 체력 바 영역들 (왼쪽부터) */
     var enemyHpBars: MutableList<RectF> = mutableListOf(),
-    /** 전투 시작 버튼 중심 (비율) */
-    var startButton: FloatArray = floatArrayOf(0f, 0f),
+    /** 전투 시작(톱니) 버튼 중심 (비율). S25 실측: (1745, 785) */
+    var startButton: FloatArray = floatArrayOf(1745f / 2340f, 785f / 1080f),
+    /** 승률 오토 버튼 중심 (비율). S25 실측: (1910, 757) */
+    var winRateButton: FloatArray = floatArrayOf(1910f / 2340f, 757f / 1080f),
+    /** 피해량 오토 버튼 중심 (비율). S25 실측: (1910, 827) */
+    var damageButton: FloatArray = floatArrayOf(1910f / 2340f, 827f / 1080f),
 ) {
-    val needsCalibration: Boolean
-        get() = labelColors.size < 5 || skillCards.isEmpty()
+    /** 라벨 템플릿 중 아직 없는 것: 보통 / 열세 / 매우 열세 (스크린샷 필요) */
+    val missingLabels: List<String> get() = listOf("보통", "열세", "매우 열세")
+    val needsCalibration: Boolean get() = false
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("name", name); put("screenW", screenW); put("screenH", screenH)

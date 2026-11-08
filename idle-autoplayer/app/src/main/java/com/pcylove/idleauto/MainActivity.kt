@@ -172,14 +172,14 @@ class MainActivity : Activity() {
             text(
                 "기기: ${Build.MANUFACTURER} ${Build.MODEL} · 안드로이드 ${Build.VERSION.RELEASE}\n" +
                     "화면: ${maxOf(dm.widthPixels, dm.heightPixels)}×${minOf(dm.widthPixels, dm.heightPixels)} (가로 기준) · 화면 읽기: $capture\n" +
-                    "보정: " + if (profile.needsCalibration) "아직 안 됨 (전투 스크린샷으로 영역·글자 색을 맞춰야 해요)" else profile.name,
+                    "프로필: ${profile.name} · 아직 없는 라벨: ${profile.missingLabels.joinToString(", ")}",
                 13f, color = 0xFF6F6A8A.toInt()
             )
         )
         card.space(6)
         card.addView(
             text(
-                "합 배치 판단 로직은 들어가 있어요. 지금 할 수 있는 건 화면 캡처 테스트예요. 패널의 📷 를 누르면 캡처가 되는지 확인하고, 캡처한 그림을 내 파일 → Android/data/com.pcylove.idleauto/files/Pictures 에 저장해요.",
+                "전투에서 승률 버튼을 누른 뒤 패널의 📷 를 누르면 스킬 칼럼별 합 예측(매우 우세·우세·일방공격)과 적 스킬 슬롯을 읽어 패널에 보여 줘요. 인식 결과를 그린 그림을 내 파일 → Android/data/com.pcylove.idleauto/files/Pictures 에 저장하니, 틀린 게 있으면 그 그림을 보내 주세요.",
                 13f
             )
         )

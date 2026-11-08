@@ -30,6 +30,7 @@ class LimbusOverlay(private val service: AutoService) {
     private var params: WindowManager.LayoutParams? = null
     private var status: TextView? = null
     private var busy = false
+    private val reader: LimbusReader by lazy { LimbusReader(LabelTemplates.load(service)) }
 
     val isOpen: Boolean get() = panel != null
 
@@ -72,10 +73,7 @@ class LimbusOverlay(private val service: AutoService) {
         panel = root
         wm.addView(root, params)
         val profile = LimbusProfile.load(service)
-        setStatus(
-            if (profile.needsCalibration) "림버스 모드 · 보정 전 (영역·글자 색 미설정)\n📷 로 캡처가 되는지 먼저 확인해요"
-            else "림버스 모드 · ${profile.name}\n📷 로 현재 화면의 합 예측을 읽어요"
-        )
+        setStatus("림버스 모드 · ${profile.name}\n승률 버튼을 누른 뒤 📷 를 누르면 칼럼별 합 예측을 읽어요")
     }
 
     fun close() {
@@ -92,16 +90,23 @@ class LimbusOverlay(private val service: AutoService) {
         ScreenCapture.capture(service) { bmp, err ->
             busy = false
             if (bmp == null) { setStatus("캡처 실패: $err"); return@capture }
-            val file = ScreenCapture.saveDebug(service, bmp)
             val profile = LimbusProfile.load(service)
             val sb = StringBuilder("캡처 ${bmp.width}×${bmp.height}")
-            if (bmp.width != profile.screenW || bmp.height != profile.screenH) sb.append(" (프로필 ${profile.screenW}×${profile.screenH} 와 다름)")
-            if (profile.needsCalibration) {
-                sb.append("\n보정 전이라 예측은 못 읽어요. 저장: ${file?.name ?: "실패"}")
+            if (bmp.width != profile.screenW || bmp.height != profile.screenH) {
+                sb.append("\n프로필(${profile.screenW}×${profile.screenH})과 달라 좌표가 어긋날 수 있어요")
+            }
+            val t0 = System.currentTimeMillis()
+            val obs = runCatching { reader.read(BitmapPixels(bmp).toArray()) }.getOrNull()
+            val ms = System.currentTimeMillis() - t0
+            if (obs == null) {
+                sb.append("\n인식 오류")
+                ScreenCapture.saveDebug(service, bmp)?.let { sb.append("\n저장: ${it.name}") }
             } else {
-                val readings = profile.skillCards.map { LabelReader.read(bmp, it, profile.labelColors) }
-                sb.append("\n").append(readings.mapIndexed { i, r -> "${i + 1}:${r.label.label}" }.joinToString(" "))
-                sb.append("\n저장: ${file?.name ?: "실패"}")
+                sb.append("\n${obs.summary()} (${ms}ms)")
+                val annotated = runCatching { LimbusDebug.annotate(bmp, obs) }.getOrNull()
+                val saved = ScreenCapture.saveDebug(service, annotated ?: bmp, "limbus_read")
+                sb.append("\n저장: ${saved?.name ?: "실패"}")
+                annotated?.recycle()
             }
             setStatus(sb.toString())
             bmp.recycle()
